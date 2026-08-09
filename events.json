@@ -1,0 +1,49 @@
+{
+  "macros": {
+    "work":  "led yellow on --only --fade 300",
+    "await": "led yellow blink --only --freq 1500 --fade 300",
+    "idle":  "led green on --only --fade 800",
+    "error": "led red blink --only --count 5 --freq 700",
+    "start": "led cyan blink --only --count 2 --freq 700 --fade 400 ; led green on --fade 800",
+    "end":   "led green breath --only --freq 4000 --fade 2000"
+  },
+  "events": {
+    "SessionStart": "start",
+    "UserPromptSubmit": "work",
+    "PreToolUse": "work",
+    "PostToolUse": "work",
+    "PostToolUseFailure": "error",
+    "PermissionRequest": "await",
+    "PermissionDenied": "await",
+    "Elicitation": "await",
+    "SubagentStart": "work",
+    "SubagentStop": "work",
+    "PreCompact": "work",
+    "PostCompact": "work",
+    "Stop": "idle",
+    "SessionEnd": "end",
+    "StopFailure": "error",
+
+    "sessionStart": "start",
+    "beforeSubmitPrompt": "work",
+    "afterFileEdit": "work",
+    "postToolUse": "work",
+    "beforeShellExecution": "await",
+    "beforeMCPExecution": "await",
+    "stop": "idle",
+    "sessionEnd": "end",
+
+    "userPromptSubmitted": "work",
+    "agentStop": "idle",
+    "errorOccurred": "error",
+
+    "copilot.chat.start": "work",
+    "copilot.chat.request": "work",
+    "copilot.chat.progress": "work",
+    "copilot.chat.complete": "idle",
+    "copilot.chat.error": "error",
+    "copilot.suggest.work": "work",
+    "copilot.suggest.idle": "idle",
+    "copilot.suggest.error": "error"
+  }
+}

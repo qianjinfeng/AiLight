@@ -1,0 +1,39 @@
+{
+  "name": "sn902-copilot-status",
+  "displayName": "SN902 Copilot Status",
+  "description": "Reports GitHub Copilot (VS Code) activity to the SN902W status-light daemon (webserver.py).",
+  "version": "0.1.0",
+  "publisher": "sleepace-local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sn902.copilot.test",
+        "title": "SN902: Test light (send Copilot start)"
+      },
+      {
+        "command": "sn902.copilot.status",
+        "title": "SN902: Show Copilot status"
+      }
+    ],
+    "configuration": {
+      "title": "SN902 Copilot Status",
+      "properties": {
+        "sn902.hookPort": {
+          "type": "number",
+          "default": 47800,
+          "description": "TCP port of the SN902 status-light daemon hook server (default 47800)."
+        }
+      }
+    }
+  }
+}

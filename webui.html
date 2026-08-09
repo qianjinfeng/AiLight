@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SN902W Status Light</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--panel:#161b22;--panel2:#1c2128;--border:#30363d;
+  --text:#e6edf3;--muted:#7d8590;--red:#f85149;--yellow:#d29922;
+  --green:#3fb950;--accent:#7c3aed;--accent2:#a78bfa;--radius:10px;
+  --mono:ui-monospace,Menlo,Consolas,monospace;--shadow:0 1px 3px rgba(0,0,0,.4);
+}
+[data-theme=light]{
+  --bg:#f6f8fa;--panel:#fff;--panel2:#f6f8fa;--border:#d0d7de;
+  --text:#1f2328;--muted:#656d76;--red:#cf222e;--yellow:#9a6700;
+  --green:#1a7f37;--accent:#7c3aed;--accent2:#7c3aed;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);
+  font:13px/1.6 -apple-system,'Segoe UI','Microsoft YaHei',system-ui,sans-serif}
+header{position:sticky;top:0;z-index:10;background:var(--panel);border-bottom:1px solid var(--border);
+  padding:10px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:15px;display:flex;align-items:center;gap:9px;white-space:nowrap}
+.pill{font-size:11px;border-radius:999px;padding:2px 9px;border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.pill.ok{color:var(--green);border-color:var(--green);background:rgba(63,185,80,.08)}
+.pill.err{color:var(--red);border-color:var(--red);background:rgba(248,81,73,.08)}
+.pill.warn{color:var(--yellow);border-color:var(--yellow)}
+.hright{display:flex;align-items:center;gap:8px;margin-left:auto}
+.icon-btn{background:var(--panel2);border:1px solid var(--border);color:var(--muted);
+  border-radius:6px;padding:4px 9px;cursor:pointer;font-size:13px;line-height:1}
+.icon-btn:hover{color:var(--text);border-color:var(--accent2)}
+main{display:grid;grid-template-columns:minmax(280px,4fr) minmax(360px,7fr);gap:14px;
+  padding:14px 18px;max-width:1280px;margin:0 auto}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.col{display:flex;flex-direction:column;gap:14px}
+section{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+  padding:13px 15px;box-shadow:var(--shadow)}
+h2{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+  margin-bottom:11px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.mono{font-family:var(--mono)}
+.led{width:26px;height:26px;border-radius:50%;margin:0 auto 6px;background:#222;
+  border:1px solid var(--border);transition:background .3s,box-shadow .3s}
+.led.lit{box-shadow:0 0 14px currentColor}
+.btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}
+.btn:hover{border-color:var(--accent2)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dev-line{background:var(--panel2);border:1px solid var(--border);border-radius:8px;
+  padding:9px 11px;font-family:var(--mono);font-size:12px}
+.cmdbar{display:flex;gap:8px}
+#cmd{flex:1;background:var(--panel2);border:1px solid var(--border);color:var(--text);
+  border-radius:8px;padding:9px 12px;font-family:var(--mono);font-size:13px;outline:none}
+#cmd:focus{border-color:var(--accent2)}
+#out{background:var(--panel2);border:1px solid var(--border);border-radius:8px;
+  padding:9px 11px;font-family:var(--mono);font-size:12px;min-height:64px;white-space:pre-wrap;
+  color:var(--muted);margin-top:8px}
+#log{max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+.evt{font-family:var(--mono);font-size:11px;padding:5px 8px;border-radius:6px;background:var(--panel2);
+  border-left:3px solid var(--border);word-break:break-all}
+.evt .t{color:var(--muted);margin-right:6px}
+.evt.hook{border-left-color:var(--accent2)}
+.evt.light{border-left-color:var(--yellow)}
+.evt.error{border-left-color:var(--red);color:var(--red)}
+.evt.connection{border-left-color:var(--green)}
+.empty{color:var(--muted);font-size:12px;padding:4px 0}
+#swatch{width:40px;height:40px;border-radius:10px;border:1px solid var(--border);background:#111}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">&#128161; SN902W Status Light</div>
+  <span id="devpill" class="pill">connecting&hellip;</span>
+  <span id="modepill" class="pill">-</span>
+  <span id="effpill" class="pill">light: -</span>
+  <div class="hright">
+    <label>brightness</label>
+    <input id="brightness" type="range" min="1" max="100" value="50" style="width:110px">
+    <span id="brightness-val" class="mono" style="min-width:26px">50</span>
+    <button class="icon-btn" onclick="toggleTheme()">theme</button>
+  </div>
+</header>
+
+<div id="adapter-warn" style="display:none;background:rgba(210,153,34,.12);border-bottom:1px solid var(--border);color:var(--yellow);padding:8px 20px;font-size:12px">
+  &#9888; No Bluetooth adapter detected on this PC. Plug in / enable a Bluetooth adapter,
+  then run <span class="mono">reconnect</span> in the console below.
+</div>
+
+<main>
+  <div class="col">
+    <section>
+      <h2>Device <span id="swatch"></span></h2>
+      <div id="device" class="dev-line">not connected</div>
+    </section>
+    <section>
+      <h2>Quick Light</h2>
+      <div class="grid">
+        <button class="btn" onclick="run('led green on --only --fade 800')">&#9679; green on</button>
+        <button class="btn" onclick="run('led green breath --only --freq 4000')">&#9678; green breath</button>
+        <button class="btn" onclick="run('led yellow on --only --fade 300')">&#9679; yellow on</button>
+        <button class="btn" onclick="run('led yellow blink --only --freq 1500')">&#9679; yellow blink</button>
+        <button class="btn" onclick="run('led red blink --only --count 5 --freq 700')">&#9679; red blink</button>
+        <button class="btn" onclick="run('led cyan blink --only --count 2 --freq 700')">&#9679; cyan blink</button>
+        <button class="btn" onclick="run('led white on --only --fade 800')">&#9679; white on</button>
+        <button class="btn" onclick="run('led all off')">&#9675; all off</button>
+      </div>
+    </section>
+    <section>
+      <h2>Command</h2>
+      <div class="cmdbar">
+        <input id="cmd" autocomplete="off" spellcheck="false"
+               placeholder="e.g.  led all blink    |    help    |    setup claude    |    devices">
+        <button class="btn" onclick="sendCmd()">run</button>
+      </div>
+      <div id="out" class="empty">type a command and press Enter</div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>Event Stream <span id="evcount" class="mono" style="color:var(--muted)"></span></h2>
+      <div id="log"><div class="empty">waiting for agent events&hellip;</div></div>
+    </section>
+  </div>
+</main>
+
+<script>
+let since = 0;
+let lastState = null;
+
+function el(id){return document.getElementById(id)}
+
+async function api(url, body){
+  try{
+    const opt = body ? {method:'POST',headers:{'Content-Type':'application/json'},
+                        body:JSON.stringify(body)} : {};
+    const r = await fetch(url, opt);
+    return await r.json();
+  }catch(e){ return {ok:false, detail:'api error: '+e} }
+}
+
+function run(cmd){
+  el('cmd').value = cmd;
+  sendCmd();
+}
+
+async function sendCmd(){
+  const cmd = el('cmd').value.trim();
+  if(!cmd) return;
+  const r = await api('/api/cmd', {cmd});
+  el('out').textContent = (r.ok ? 'ok: ' : 'error: ') + (r.detail || '');
+  el('out').style.color = r.ok ? 'var(--text)' : 'var(--red)';
+  el('cmd').value = '';
+}
+
+async function refreshState(){
+  const s = await api('/api/state');
+  lastState = s;
+  const dev = s.device || {};
+  const p = el('devpill');
+  const noAdapter = s.adapter && !s.adapter.ok;
+  el('adapter-warn').style.display = noAdapter ? 'block' : 'none';
+  p.className = 'pill ' + (s.connected ? 'ok' : (noAdapter ? 'warn' : 'err'));
+  p.textContent = s.connected
+      ? 'connected ' + (dev.name||'')
+      : (s.dry_run ? 'dry-run' : (noAdapter ? 'no bluetooth adapter' : 'disconnected'));
+  el('modepill').textContent = s.dry_run ? 'mode: dry-run' : 'mode: live';
+  if(noAdapter){
+    el('device').textContent = 'NO BLUETOOTH ADAPTER  (' + (s.adapter.error||'') + ')';
+  } else {
+    el('device').textContent = [
+      s.connected ? 'CONNECTED' : 'NOT CONNECTED',
+      dev.name || '-', dev.address || '-',
+      dev.last_error ? ('('+dev.last_error+')') : ''
+    ].join('  ');
+  }
+  const eff = s.effect;
+  if(eff){
+    let color = '#'+(eff.rgb||[255,255,255]).map(function(v){return v.toString(16).padStart(2,'0')}).join('');
+    if(eff.white) color = '#fff8e6';
+    el('effpill').textContent = 'light: '+ (eff.action||'') + ' ' + color;
+    const sw = el('swatch'); sw.style.background = color; sw.style.boxShadow='0 0 12px '+color;
+  } else {
+    el('effpill').textContent = 'light: off';
+    el('swatch').style.background = '#111'; el('swatch').style.boxShadow = 'none';
+  }
+  el('brightness').value = s.brightness||50;
+  el('brightness-val').textContent = s.brightness||50;
+}
+
+async function refreshEvents(){
+  const r = await api('/api/events?since='+since);
+  const evs = r.events||[];
+  since = r.now||since;
+  if(!evs.length) return;
+  const box = el('log');
+  if(box.firstChild && box.firstChild.className==='empty') box.innerHTML='';
+  for(const e of evs){
+    const d = document.createElement('div');
+    const ts = new Date(e.t*1000).toLocaleTimeString();
+    d.className = 'evt ' + (e.kind||'system');
+    d.innerHTML = '<span class="t">'+ts+'</span>'+esc(e.message||'');
+    box.appendChild(d);
+  }
+  while(box.children.length>400) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+  el('evcount').textContent = r.now||'';
+}
+
+function esc(s){return String(s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]})}
+
+function toggleTheme(){
+  const h = document.documentElement;
+  h.dataset.theme = h.dataset.theme==='dark' ? 'light' : 'dark';
+}
+
+el('cmd').addEventListener('keydown', function(e){ if(e.key==='Enter') sendCmd(); });
+
+el('brightness').addEventListener('change', function(){
+  api('/api/cmd', {cmd:'write led.brightness '+this.value}).then(function(r){
+    if(r.ok){ el('brightness-val').textContent = this.value }
+  }.bind(this));
+});
+
+refreshState();
+setInterval(refreshState, 2000);
+refreshEvents();
+setInterval(refreshEvents, 1500);
+</script>
+</body>
+</html>
