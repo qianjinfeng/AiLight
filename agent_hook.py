@@ -46,9 +46,9 @@ _ANTIGRAVITY_ALLOW = {"decision": "allow"}
 # Colors chosen for a single RGBW light (PromLight-style semantics).
 _DEFAULT_MACROS = {
     "work":  "led yellow on --only --fade 300",
-    "await": "led yellow blink --only --freq 1500 --fade 300",
+    "await": "led red blink --only --freq 1500 --fade 300",
     "idle":  "led green on --only --fade 800",
-    "error": "led red blink --only --count 5 --freq 700",
+    "error": "led red on --only",
     "start": "led cyan blink --only --count 2 --freq 700 --fade 400 ; led green on --fade 800",
     "end":   "led green breath --only --freq 4000 --fade 2000",
 }
@@ -81,6 +81,7 @@ _DEFAULT_EVENTS = {
     "sessionEnd":           "end",
     # Copilot CLI (camelCase)
     "userPromptSubmitted":  "work",
+    "preToolUse":           "await",
     "agentStop":            "idle",
     "errorOccurred":        "error",
 }

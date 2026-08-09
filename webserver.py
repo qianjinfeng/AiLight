@@ -99,12 +99,11 @@ CODEX_HOOK_EVENTS = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Permissio
 CURSOR_HOOK_EVENTS = ("sessionStart", "beforeSubmitPrompt", "afterFileEdit", "postToolUse",
                       "beforeShellExecution", "beforeMCPExecution", "stop", "sessionEnd")
 # Copilot CLI native hook events (docs.github.com/.../agents/hooks) - camelCase.
-# NOTE: Copilot CLI has NO "waiting for user" (await) signal - its approval
-# prompts are interactive UI, and preToolUse (the only event that fires near
-# them) is a blocking hook that also fires on every auto-approved tool call,
-# so it is deliberately not mapped.
-COPILOT_HOOK_EVENTS = ("sessionStart", "userPromptSubmitted", "postToolUse",
-                       "agentStop", "sessionEnd", "errorOccurred")
+# preToolUse fires right before each tool call (including auto-approved ones);
+# we map it to `await` (red blink) as a "tool pending" indicator. The hook exits
+# 0 so Copilot CLI's own approval flow is unchanged (exit code 2 would deny).
+COPILOT_HOOK_EVENTS = ("sessionStart", "userPromptSubmitted", "preToolUse",
+                       "postToolUse", "agentStop", "sessionEnd", "errorOccurred")
 
 log = logging.getLogger("webserver")
 
@@ -162,6 +161,7 @@ def load_events():
         "postToolUse": "work", "beforeShellExecution": "await", "beforeMCPExecution": "await",
         "stop": "idle", "sessionEnd": "end",
         "userPromptSubmitted": "work", "agentStop": "idle", "errorOccurred": "error",
+        "preToolUse": "await",
         # VS Code Copilot (reported by the sn902-copilot-status extension)
         "copilot.chat.start": "work", "copilot.chat.request": "work",
         "copilot.chat.progress": "work", "copilot.chat.complete": "idle",
@@ -175,9 +175,9 @@ def load_events():
     }
     defaults_macros = {
         "work":  "led yellow on --only --fade 300",
-        "await": "led yellow blink --only --freq 1500 --fade 300",
+        "await": "led red blink --only --freq 1500 --fade 300",
         "idle":  "led green on --only --fade 800",
-        "error": "led red blink --only --count 5 --freq 700",
+        "error": "led red on --only",
         "start": "led cyan blink --only --count 2 --freq 700 --fade 400 ; led green on --fade 800",
         "end":   "led green breath --only --freq 4000 --fade 2000",
     }
@@ -1123,7 +1123,8 @@ def _merge_copilot_hooks():
     except Exception as e:
         return False, "write failed: %s" % e
     return True, ("updated %s (Copilot CLI reads ~/.copilot/hooks/*.json; "
-                  "no 'await' state - approval prompts are interactive UI)") % path
+                  "preToolUse maps to 'await'/red blink, hook exits 0 so "
+                  "approvals are unchanged)") % path
 
 
 def _install_opencode_plugin():
