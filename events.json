@@ -44,6 +44,11 @@
     "copilot.chat.error": "error",
     "copilot.suggest.work": "work",
     "copilot.suggest.idle": "idle",
-    "copilot.suggest.error": "error"
+    "copilot.suggest.error": "error",
+
+    "opencode.busy": "work",
+    "opencode.idle": "idle",
+    "opencode.error": "error",
+    "opencode.await": "await"
   }
 }

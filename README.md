@@ -81,11 +81,15 @@ setup vscode       # installs the VS Code Copilot-status extension
   `agentStop`, `sessionEnd`, `errorOccurred`) contain no permission event.
   `preToolUse` is deliberately not mapped: it is a blocking hook that also
   fires on every auto-approved tool call, so it cannot mean "waiting for you".
-- **opencode**: the plugin is auto-discovered from
-  `~/.config/opencode/plugins/`. **Restart opencode** after installing. The
-  plugin maps opencode's bus events (`user.prompt.submit`,
-  `tool.execute.before/after`, `session.idle`, …) onto the light. It talks to
-  the daemon on port 47800 (`SN902_HOOK_PORT` to override).
+- **opencode**: built in — no install step. OpenCode Desktop ≥1.18 uses an
+  Effect-based plugin API that has **no session-event hook**, so the daemon
+  instead tails the local `opencode.db` event table
+  (`~/.local/share/opencode/opencode.db`) and turns recent agent activity into
+  light states (`opencode.busy`→yellow, `opencode.idle`→green,
+  `opencode.error`→red). Tune with `opencode_watch`, `opencode_db`,
+  `opencode_idle_ms` in `config.json`. (`setup opencode` still installs
+  `~/.config/opencode/plugins/sn902.js`, which only works on opencode builds
+  that still support the legacy `event` hook; it is optional.)
 - **VS Code Copilot**: the extension goes into
   `~/.vscode/extensions/sleepace-local.sn902-copilot-status-0.1.0/`. **Reload
   the VS Code window** after installing, then open the **"SN902"** output

@@ -19,5 +19,9 @@
   "brightness": 70,
   "default_color": "cyan",
   "reconnect_delay": 3,
-  "auto_connect": true
+  "auto_connect": true,
+  "opencode_watch": true,
+  "opencode_db": "",
+  "opencode_idle_ms": 4000,
+  "opencode_poll_s": 1.0
 }

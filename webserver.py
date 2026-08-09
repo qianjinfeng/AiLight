@@ -41,6 +41,7 @@ import os
 import shlex
 import shutil
 import socket
+import sqlite3
 import sys
 import threading
 import time
@@ -65,6 +66,11 @@ DEFAULT_CONFIG = {
     "default_color": "cyan",
     "reconnect_delay": 3,
     "auto_connect": True,
+    # opencode activity watcher (reads the local opencode.db event table)
+    "opencode_watch": True,
+    "opencode_db": "",          # auto-detected: ~/.local/share/opencode/opencode.db
+    "opencode_idle_ms": 4000,   # trail busy for this long after the last event
+    "opencode_poll_s": 1.0,
 }
 
 # named colors for the single RGBW light
@@ -162,6 +168,10 @@ def load_events():
         "copilot.chat.error": "error",
         "copilot.suggest.work": "work", "copilot.suggest.idle": "idle",
         "copilot.suggest.error": "error",
+        # opencode (reported by the built-in SQLite watcher; the opencode plugin
+        # API has no session-event hook on desktop 1.18.x)
+        "opencode.busy": "work", "opencode.idle": "idle",
+        "opencode.error": "error", "opencode.await": "await",
     }
     defaults_macros = {
         "work":  "led yellow on --only --fade 300",
@@ -582,6 +592,112 @@ async def hook_server(app):
 
 
 # ------------------------------------------------------------------------------
+# opencode activity watcher
+#
+# OpenCode Desktop (>=1.18) uses an Effect-based plugin API with no session-event
+# hook, so a plugin cannot observe "busy/idle". Instead we tail the event table
+# of the local SQLite store (~/.local/share/opencode/opencode.db): while the
+# agent is working it keeps appending event rows (message.part.updated.1 etc.),
+# and when it goes idle the writes stop. We treat "recent events" as busy and a
+# quiet period (opencode_idle_ms) as idle, and report transitions to the light.
+# ------------------------------------------------------------------------------
+def _opencode_db_path(cfg):
+    p = str(cfg.get("opencode_db") or "").strip()
+    if p:
+        return os.path.expanduser(p)
+    return os.path.join(os.path.expanduser("~"), ".local", "share", "opencode", "opencode.db")
+
+
+def _opencode_poll(db, last_seq):
+    """Return (max_seq, has_activity, has_error) since last_seq. Never raises."""
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % db, uri=True, timeout=2)
+        try:
+            cur = con.cursor()
+            cur.execute("SELECT MAX(seq) FROM event")
+            row = cur.fetchone()
+            if row is None or row[0] is None:
+                return None, False, False
+            max_seq = int(row[0])
+            if max_seq <= last_seq:
+                return max_seq, False, False
+            cur.execute("SELECT type, data FROM event WHERE seq > ? ORDER BY seq LIMIT 800",
+                        (last_seq,))
+            rows = cur.fetchall()
+        finally:
+            con.close()
+        has_error = False
+        for typ, data in rows:
+            if "error" in typ.lower() or "fail" in typ.lower():
+                has_error = True
+                continue
+            try:
+                obj = json.loads(data)
+            except Exception:
+                continue
+            if isinstance(obj, dict):
+                part = obj.get("part")
+                if isinstance(part, dict) and part.get("type") == "tool":
+                    st = part.get("state") or {}
+                    if st.get("status") in ("error", "failed"):
+                        has_error = True
+        return max_seq, True, has_error
+    except Exception as e:
+        log.warning("opencode watcher db error: %s", e)
+        return None, False, False
+
+
+def _opencode_apply(app, macro):
+    try:
+        cmd = expand_macros(macro, app.macros)
+        if cmd:
+            execute_cmd(app, cmd, source="opencode")
+    except Exception as e:
+        log.warning("opencode apply failed: %s", e)
+
+
+def opencode_watcher_thread(app):
+    db = _opencode_db_path(app.config)
+    idle_ms = int(app.config.get("opencode_idle_ms", 4000))
+    poll_s = max(0.2, float(app.config.get("opencode_poll_s", 1.0)))
+    last_seq = -1
+    last_activity = 0.0
+    state = None
+    missing_logged = False
+    while True:
+        time.sleep(poll_s)
+        if not os.path.exists(db):
+            if not missing_logged:
+                missing_logged = True
+                app.log("warn", "opencode watcher: db not found yet (%s)" % db,
+                        kind="opencode")
+            continue
+        missing_logged = False
+        max_seq, activity, has_error = _opencode_poll(db, last_seq)
+        if max_seq is not None:
+            last_seq = max_seq
+        if activity:
+            last_activity = time.time()
+            if state != "busy":
+                state = "busy"
+                app.log("info", "opencode: busy", kind="opencode")
+                _opencode_apply(app, app.events.get("opencode.busy") or "work")
+            elif has_error and state != "error":
+                state = "error"
+                app.log("info", "opencode: error", kind="opencode")
+                _opencode_apply(app, app.events.get("opencode.error") or "error")
+            continue
+        if state == "busy" and has_error and state != "error":
+            state = "error"
+            app.log("info", "opencode: error", kind="opencode")
+            _opencode_apply(app, app.events.get("opencode.error") or "error")
+        if state in ("busy", "error") and (time.time() - last_activity) * 1000 > idle_ms:
+            state = "idle"
+            app.log("info", "opencode: idle", kind="opencode")
+            _opencode_apply(app, app.events.get("opencode.idle") or "idle")
+
+
+# ------------------------------------------------------------------------------
 # command parser (shared by web console + hook server)
 # ------------------------------------------------------------------------------
 def parse_opts(parts):
@@ -757,6 +873,13 @@ def execute_cmd(app, cmd, source="console"):
     cmd = (cmd or "").strip()
     if not cmd:
         return {"ok": False, "detail": "empty command"}
+    # support ';'-chained commands (e.g. "start"/"end" macros)
+    clauses = [c.strip() for c in cmd.split(";") if c.strip()]
+    if len(clauses) > 1:
+        results = [execute_cmd(app, c, source) for c in clauses]
+        return {"ok": all(r.get("ok") for r in results),
+                "detail": " ; ".join(r.get("detail", "") for r in results)}
+    cmd = clauses[0]
     # route: @alias ...
     if cmd.startswith("@"):
         idx = cmd.find(" ")
@@ -1010,8 +1133,9 @@ def _install_opencode_plugin():
         os.replace(tmp, dest)
     except Exception as e:
         return False, "write failed: %s" % e
-    return True, ("installed %s (restart opencode for it to take effect; "
-                  "daemon hook port is 47800, override with SN902_HOOK_PORT)") % dest
+    return True, ("installed %s (OPTIONAL: only works on opencode builds with the "
+                  "legacy 'event' plugin hook; on Desktop >=1.18 the built-in "
+                  "opencode.db watcher is used instead)") % dest
 
 
 def _install_vscode_extension():
@@ -1220,6 +1344,10 @@ def main():
 
     http_thread = threading.Thread(target=start_http, args=(app, cfg["web_port"]), daemon=True)
     http_thread.start()
+
+    if cfg.get("opencode_watch", True):
+        watch_thread = threading.Thread(target=opencode_watcher_thread, args=(app,), daemon=True)
+        watch_thread.start()
 
     url = "http://127.0.0.1:%s" % cfg["web_port"]
     print("=" * 62)
