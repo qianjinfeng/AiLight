@@ -39,6 +39,7 @@ com.medica.xiangshui, package com.medica.xiangshui.devicemanager):
 
 import asyncio
 import logging
+import re
 import struct
 import time
 import zlib
@@ -69,6 +70,47 @@ NAME_FRAGMENTS = ("SN22", "SN-21", "SN", "Nox 902", "902B", "902W")
 # they expose the ffe0/ffe5 GATT services after connection. Any device
 # advertising one of these is treated as a connection candidate.
 MATCH_SERVICES = ("0000fff0", "0000ffb0")
+
+# Sleepace BLE manufacturer/company id (0x4E53 = ASCII "NS").
+# The manufacturer-data payload carries the SN tail as ASCII, e.g.
+# b"22174001433" -> full SN "SN22174001433" (SN22... => Nox 902W).
+SLEEPACE_MFR_ID = 0x4E53
+
+# SN prefix -> device type (same rules as the WeChat Mini App utils/device.js)
+_SN_TYPE_PATTERNS = (
+    (re.compile(r"^SN21[0-9A-Za-z]{9}$"), DEVICE_TYPE_NOX_2B),  # SN902B
+    (re.compile(r"^SN22[0-9A-Za-z]{9}$"), DEVICE_TYPE_NOX_2W),  # SN902W
+    (re.compile(r"^SA11[0-9A-Za-z]{9}$"), 23),                  # Nox SaW
+    (re.compile(r"^SA12[0-9A-Za-z]{9}$"), 24),                  # Nox SaB
+    (re.compile(r"^NOX[0-9A-Za-z]{9,10}$"), 2),                 # Nox 1
+)
+
+
+def extract_sn(name, manufacturer_data):
+    """Return (sn, device_type) parsed from the Sleepace advertisement.
+
+    The manufacturer-data payload is the SN tail as ASCII (the 'SN' prefix is
+    implicit in the 0x4E53 company id), and some units advertise the full SN
+    as the device name. Returns (None, None) if no Nox SN is recognised.
+    """
+    cands = []
+    for payload in (manufacturer_data or {}).values():
+        try:
+            t = bytes(payload).decode("ascii", "replace").strip("\x00").strip()
+        except Exception:
+            continue
+        if not t:
+            continue
+        cands.append(t)
+        if not t.startswith(("SN", "SA", "NOX")):
+            cands.append("SN" + t)
+    if name:
+        cands.append(name)
+    for c in cands:
+        for pat, dtype in _SN_TYPE_PATTERNS:
+            if pat.match(c):
+                return c, dtype
+    return None, None
 
 # ---- packet header types (DataPacket.PacketType) -----------------------------
 FA_REQUEST = 2
@@ -211,6 +253,7 @@ class SN902Device:
         self.device_name = None
         self.device_address = None
         self.device_type = DEVICE_TYPE_NOX_2W
+        self.sn = ""
         self.last_error = None
         self._write_lock = asyncio.Lock()
 
@@ -231,10 +274,13 @@ class SN902Device:
         advertisement data: local name, rssi, manufacturer data, services).
 
         Returns `(found, all_devices, adapter_ok, adapter_error)`:
-          - found:       (name, address, rssi) matching `name_fragments`,
-                         the pinned `address`, or an advertised MATCH_SERVICES uuid
+          - found:       (name, address, rssi, device_type, sn) for devices that
+                         look like Nox (SN from Sleepace manufacturer data, the
+                         pinned `address`, a matching name fragment, or a
+                         MATCH_SERVICES uuid)
           - all_devices: everything discovered, as
-                         (name, address, rssi, manufacturer_data, service_uuids)
+                         (name, address, rssi, manufacturer_data,
+                          service_uuids, sn, device_type)
           - adapter_ok / adapter_error: False when the OS reports no Bluetooth
             radio (then device-not-found is expected).
         """
@@ -244,9 +290,11 @@ class SN902Device:
         adapter_error = ""
         seen = set()
 
-        def _match(name, svcs):
-            if address and False:  # handled below by exact address
-                return False
+        def _match(name, svcs, sn, address_hit):
+            if address_hit:
+                return True
+            if sn:
+                return True
             if name and any(f in name for f in name_fragments):
                 return True
             for u in svcs:
@@ -262,14 +310,14 @@ class SN902Device:
             seen.add(key)
             name = (getattr(adv, "local_name", None) or device.name or "").strip()
             rssi = getattr(adv, "rssi", None)
+            md = getattr(adv, "manufacturer_data", None) or {}
             svcs = list(getattr(adv, "service_uuids", None) or [])
-            entry = (name, device.address, rssi,
-                     getattr(adv, "manufacturer_data", None) or {}, svcs)
+            sn, dtype = extract_sn(name, md)
+            entry = (name, device.address, rssi, md, svcs, sn, dtype)
             all_devices.append(entry)
-            if address and device.address.lower() == str(address).lower():
-                found.append(entry[:3])
-            elif _match(name, svcs):
-                found.append(entry[:3])
+            address_hit = bool(address and device.address.lower() == str(address).lower())
+            if _match(name, svcs, sn, address_hit):
+                found.append((name, device.address, rssi, dtype or 0, sn or ""))
 
         try:
             scanner = bleak.BleakScanner(detection_callback=callback)

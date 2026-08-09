@@ -75,7 +75,7 @@ DEFAULT_CONFIG = {
 
 # named colors for the single RGBW light
 COLORS = {
-    "green":   (0, 220, 60),
+    "green":   (0, 255, 0),
     "red":     (255, 40, 40),
     "yellow":  (255, 200, 0),
     "orange":  (255, 130, 0),
@@ -283,6 +283,8 @@ class App:
                 "address": d.device_address,
                 "connected_at": d.connected_at,
                 "last_error": d.last_error,
+                "sn": d.sn,
+                "device_type": d.device_type,
             },
             "effect": self.engine.current,
             "brightness": self.brightness_percent,
@@ -481,9 +483,13 @@ async def connect_once(app):
         app.log("warn", "no device matched name filter '%s' (found: %s)" %
                 (filt, ", ".join(f[0] or "?" for f in found)), kind="connection")
         return False
-    for name, addr, rssi in candidates:
+    for cand in candidates:
+        name, addr, rssi, dtype, sn = cand[0], cand[1], cand[2], cand[3], cand[4]
         if await dev.connect((name, addr)):
-            log.info("connected to %s (%s) rssi=%s", name, addr, rssi)
+            dev.device_type = int(dtype or 0) or dev.device_type
+            dev.sn = sn or ""
+            log.info("connected to %s (%s) rssi=%s type=%s sn=%s",
+                     name, addr, rssi, dev.device_type, dev.sn or "?")
             return True
         log.warning("candidate %s (%s) connect failed: %s", name, addr, dev.last_error)
         dev.last_error = None
@@ -914,18 +920,22 @@ def execute_cmd(app, cmd, source="console"):
                         "detail": "no Bluetooth adapter found (%s) - plug in / enable Bluetooth" % adapter_error}
             app.adapter_error = ""
             if show_all or not found:
-                def _is_candidate(n, svcs):
+                def _is_candidate(n, svcs, sn):
+                    if sn:
+                        return True
                     if n and any(f in n for f in app.config.get("name_fragments", sn902.NAME_FRAGMENTS)):
                         return True
                     return any(u.lower().startswith(s) for s in sn902.MATCH_SERVICES
                                for u in (svcs or []))
                 lines = ["%d device(s) on the air:" % len(all_dev)]
-                for n, a, r, _md, sv in all_dev:
-                    mark = "*" if _is_candidate(n, sv) else " "
-                    lines.append("%s %-26s %s  rssi=%s" % (mark, n or "(no name)", a, r))
+                for n, a, r, _md, sv, sn, dtype in all_dev:
+                    mark = "*" if _is_candidate(n, sv, sn) else " "
+                    tag = " 902W" if dtype == 12 else (" 902B" if dtype == 11 else "")
+                    lines.append("%s %-24s %s  rssi=%-4s %s%s" %
+                                 (mark, (n or "(no name)")[:24], a, r, sn or "", tag))
                 if found:
                     lines.append("")
-                    lines.append("matches: " + ", ".join(n or a for n, a, _r in found))
+                    lines.append("matches: " + ", ".join((f[4] or f[0] or f[1]) for f in found))
                 detail = "\n".join(lines)
             else:
                 detail = "\n".join("%s  %s  rssi=%s" % (n or "?", a, r) for n, a, r in found)
@@ -1306,16 +1316,18 @@ def main():
                 print("Plug in / enable a Bluetooth adapter, then retry.")
                 return
             print("%d device(s) on the air:" % len(all_dev))
-            for n, a, r, md, sv in all_dev:
-                mark = "*"
-                if not (n and any(f in n for f in sn902.NAME_FRAGMENTS)):
+            for n, a, r, md, sv, sn, dtype in all_dev:
+                mark = "*" if sn else ""
+                if not mark:
+                    mark = "*" if (n and any(f in n for f in sn902.NAME_FRAGMENTS)) else ""
+                if not mark:
                     mark = "*" if any(u.lower().startswith(s) for s in sn902.MATCH_SERVICES for u in (sv or [])) else " "
-                extra = (" svc=" + ",".join(sv)) if sv else ""
-                print("%s %-26s %s  rssi=%s%s" % (mark, n or "(no name)", a, r, extra))
+                tag = " 902W" if dtype == 12 else (" 902B" if dtype == 11 else "")
+                print("%s %-24s %s  rssi=%-4s %s%s" % (mark, (n or "(no name)")[:24], a, r, sn or "", tag))
             if found:
-                print("\nSN902 matches: " + ", ".join(n or a for n, a, _r in found))
+                print("\nSN matches: " + ", ".join((f[4] or f[0] or f[1]) for f in found))
             else:
-                print("\nNo SN902 match found.")
+                print("\nNo Nox 902B/902W match found.")
         asyncio.run(_s())
         return
 

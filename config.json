@@ -1,8 +1,8 @@
 {
   "ble_address": "",
   "ble_addresses": [
-    "44:2C:05:AF:9E:40",
-    "B0:F1:EC:20:FB:E4"
+    "B0:F1:EC:20:FB:E4",
+    "44:2C:05:AF:9E:40"    
   ],
   "ble_name_filter": "",
   "name_fragments": [
