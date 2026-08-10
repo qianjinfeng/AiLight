@@ -62,7 +62,7 @@ DEFAULT_CONFIG = {
     "scan_timeout": 8,
     "web_port": 7800,
     "hook_port": 47800,
-    "brightness": 50,           # 1-100 percent
+    "brightness": 3,           # 1-100 percent
     "default_color": "cyan",
     "reconnect_delay": 3,
     "auto_connect": True,
@@ -997,8 +997,8 @@ def home_path(*parts):
 
 def hook_cmd(agent):
     py = shutil.which("python") or shutil.which("python3") or "python"
-    script = os.path.join(SCRIPT_DIR, "agent_hook.py")
-    return '%s %s --agent %s' % (py, script, agent)
+    script = os.path.join(SCRIPT_DIR, "agent_hook.py").replace("\\", "/")
+    return '%s %s --agent %s' % (py.replace("\\", "/"), script, agent)
 
 
 def write_agent_hooks(app, agent):
@@ -1033,19 +1033,41 @@ def _merge_events_json(path, key, events, cmd):
     section = data.get(key)
     if not isinstance(section, dict):
         section = {}
-    hook_obj = {"type": "command", "command": cmd}
     for ev in events:
-        entries = section.get(ev)
-        if not isinstance(entries, list):
-            entries = []
-        found = any(
-            isinstance(entry, dict)
-            and any(isinstance(h, dict) and h.get("type") == "command" and h.get("command") == cmd
-                    for h in entry.get("hooks", [])) if isinstance(entry.get("hooks"), list) else False
-            for entry in entries)
-        if not found:
-            entries.append({"matcher": "", "hooks": [dict(hook_obj)]})
-            section[ev] = entries
+        matchers = section.get(ev)
+        if not isinstance(matchers, list):
+            matchers = []
+        # Clean stale SN902 hooks from every matcher-group's inner hook
+        # list (idempotent: re-runs replace the old command, never duplicate).
+        cleaned = []
+        for mg in matchers:
+            if not isinstance(mg, dict):
+                continue
+            hlist = mg.get("hooks")
+            if isinstance(hlist, list):
+                hlist = [h for h in hlist if not (
+                    isinstance(h, dict)
+                    and h.get("type") == "command"
+                    and "agent_hook.py" in str(h.get("command", "") or "")
+                )]
+            if hlist:
+                mg["hooks"] = hlist
+                cleaned.append(mg)
+        matchers = cleaned
+        # If our exact cmd isn't already present, add a matcher.
+        if not any(
+            isinstance(mg, dict)
+            and isinstance(mg.get("hooks"), list)
+            and any(
+                isinstance(h, dict)
+                and h.get("type") == "command"
+                and h.get("command") == cmd
+                for h in mg["hooks"]
+            )
+            for mg in matchers
+        ):
+            matchers.append({"matcher": "", "hooks": [{"type": "command", "command": cmd}]})
+        section[ev] = matchers
     data[key] = section
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -1086,7 +1108,12 @@ def _merge_copilot_hooks():
     documented format). Each hook feeds the agent payload (on stdin) to
     agent_hook.py. Merge is idempotent and preserves other hooks."""
     path = home_path(".copilot", "hooks", "sn902-status.json")
-    script = os.path.join(SCRIPT_DIR, "agent_hook.py")
+    # Resolve the real Python executable (same logic as hook_cmd).
+    py = shutil.which("python") or shutil.which("python3") or "python"
+    # Use forward slashes so the command works in both bash and powershell.
+    py_fwd = py.replace("\\", "/")
+    script_fwd = os.path.join(SCRIPT_DIR, "agent_hook.py").replace("\\", "/")
+    cmd_template = "%s %s {event} --agent copilot" % (py_fwd, script_fwd)
     data = {}
     if os.path.exists(path):
         try:
@@ -1104,15 +1131,22 @@ def _merge_copilot_hooks():
         entries = hooks.get(ev)
         if not isinstance(entries, list):
             entries = []
-        ps = "python '%s' %s --agent copilot" % (script, ev)
-        if not any(isinstance(h, dict) and h.get("powershell") == ps for h in entries):
-            entries.append({
-                "type": "command",
-                "bash": "python3 '%s' %s --agent copilot" % (script, ev),
-                "powershell": ps,
-                "timeoutSec": 5,
-            })
-            hooks[ev] = entries
+        # Remove any stale entries that reference the same agent_hook.py
+        # script (e.g. from a previous install that used a different Python
+        # path).  This keeps the hooks file clean on re-runs.
+        entries = [h for h in entries if not (
+            isinstance(h, dict)
+            and h.get("type") == "command"
+            and "agent_hook.py" in str(h.get("bash", "") or "")
+        )]
+        cmd = cmd_template.format(event=ev)
+        entries.append({
+            "type": "command",
+            "bash": cmd,
+            "powershell": cmd,
+            "timeoutSec": 5,
+        })
+        hooks[ev] = entries
     data["hooks"] = hooks
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
